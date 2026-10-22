@@ -36,6 +36,17 @@ jobs:
           yes | sdkmanager --licenses
           sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
+      - name: Diagnose Gradle project
+        run: |
+          echo "Current directory:"
+          pwd
+          echo "Files in repository root:"
+          ls -la
+          echo "App directory:"
+          ls -la app || true
+          echo "Gradle tasks available:"
+          gradle tasks --all
+
       - name: Build APK
         run: gradle assembleDebug
 
