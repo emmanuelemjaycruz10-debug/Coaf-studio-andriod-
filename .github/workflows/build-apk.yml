@@ -30,7 +30,7 @@ jobs:
 
       - name: Install Android SDK packages
         run: |
-          sdkmanager --licenses
+          yes | sdkmanager --licenses
           sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Build APK
