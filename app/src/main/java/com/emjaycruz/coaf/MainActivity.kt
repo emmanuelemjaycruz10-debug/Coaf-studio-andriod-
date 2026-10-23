@@ -743,5 +743,3 @@ private fun CoafStudio() {
                         }
                     }
                 }
-
-                // Continue with the remaining sections of your existing code.
