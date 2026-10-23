@@ -1,6 +1,9 @@
 package com.emjaycruz.coaf
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.media.MediaPlayer
+import android.media.MediaRecorder
 import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
@@ -26,9 +29,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.delay
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 
 private val StudioBackground = Color(0xFF100D18)
 private val PanelBackground = Color(0xFF20182C)
@@ -41,7 +46,6 @@ private val TrackGreen = Color(0xFF72E0B0)
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         setContent {
             MaterialTheme {
                 Surface(
@@ -68,13 +72,15 @@ private class StudioTrack(val number: Int) {
     var solo by mutableStateOf(false)
     var loaded by mutableStateOf(false)
     var playing by mutableStateOf(false)
+    var recording by mutableStateOf(false)
     var player: MediaPlayer? = null
+    var recorder: MediaRecorder? = null
+    var recordingFile: File? = null
 }
 
 @Composable
 private fun CoafStudio() {
     val context = LocalContext.current
-
     val tracks = remember {
         mutableStateListOf<StudioTrack>().apply {
             repeat(16) { add(StudioTrack(it + 1)) }
@@ -86,6 +92,7 @@ private fun CoafStudio() {
     var projectName by remember { mutableStateOf("My COAF Project") }
     var isPlaying by remember { mutableStateOf(false) }
     var projectStatus by remember { mutableStateOf("Ready") }
+    var pendingRecordingTrack by remember { mutableStateOf<StudioTrack?>(null) }
 
     fun notifyUser(message: String) {
         Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
@@ -119,13 +126,12 @@ private fun CoafStudio() {
 
     fun startPlayback() {
         val hasSolo = tracks.any { it.loaded && it.solo }
-
         val playable = tracks.filter {
             it.loaded && !it.muted && (!hasSolo || it.solo)
         }
 
         if (playable.isEmpty()) {
-            notifyUser("Import audio into a track first.")
+            notifyUser("Import audio or record a track first.")
             return
         }
 
@@ -140,7 +146,7 @@ private fun CoafStudio() {
                     track.position = 0
                 }
 
-                player.start()
+                if (!player.isPlaying) player.start()
                 track.playing = true
             } catch (_: Exception) {
             }
@@ -170,11 +176,219 @@ private fun CoafStudio() {
         }
     }
 
+    fun loadRecordedAudio(track: StudioTrack, file: File) {
+        try {
+            val uri = Uri.fromFile(file)
+
+            track.player?.release()
+            track.player = null
+            track.loaded = false
+
+            val player = MediaPlayer()
+
+            player.setOnPreparedListener { prepared ->
+                track.player = prepared
+                track.uri = uri
+                track.duration = prepared.duration.coerceAtLeast(0)
+                track.position = 0
+                track.name = file.nameWithoutExtension.take(32)
+                track.loaded = true
+                track.playing = false
+
+                val gain = if (track.muted) 0f else track.volume
+                prepared.setVolume(gain, gain)
+
+                notifyUser("Recording saved to Track ${track.number}.")
+            }
+
+            player.setOnCompletionListener {
+                track.playing = false
+                track.position = track.duration
+            }
+
+            player.setOnErrorListener { _, _, _ ->
+                track.loaded = false
+                notifyUser(
+                    "Recording saved, but could not be loaded for playback."
+                )
+                true
+            }
+
+            player.setDataSource(file.absolutePath)
+            player.prepareAsync()
+        } catch (e: Exception) {
+            notifyUser(
+                "Could not load recording: ${e.localizedMessage ?: "unknown error"}"
+            )
+        }
+    }
+
+    fun startRecordingNow(track: StudioTrack) {
+        if (track.number == 16) {
+            notifyUser("Track 16 is reserved for your instrumental.")
+            return
+        }
+
+        if (tracks.any { it.recording }) {
+            notifyUser(
+                "Stop the current recording before recording another track."
+            )
+            return
+        }
+
+        try {
+            track.player?.pause()
+            track.player?.release()
+            track.player = null
+            track.loaded = false
+            track.uri = null
+            track.position = 0
+            track.duration = 0
+
+            val recordingDir = File(
+                context.getExternalFilesDir(null),
+                "COAF_Recordings"
+            )
+
+            if (!recordingDir.exists() && !recordingDir.mkdirs()) {
+                throw IllegalStateException(
+                    "Could not create recording folder"
+                )
+            }
+
+            val file = File(
+                recordingDir,
+                "COAF_Track_${track.number}_${System.currentTimeMillis()}.m4a"
+            )
+
+            val recorder = MediaRecorder(context)
+            recorder.setAudioSource(MediaRecorder.AudioSource.MIC)
+            recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            recorder.setAudioEncodingBitRate(192000)
+            recorder.setAudioSamplingRate(44100)
+            recorder.setOutputFile(file.absolutePath)
+
+            recorder.setOnErrorListener { _, _, _ ->
+                track.recording = false
+
+                try {
+                    track.recorder?.release()
+                } catch (_: Exception) {
+                }
+
+                track.recorder = null
+                notifyUser(
+                    "Recording stopped because the recorder reported an error."
+                )
+            }
+
+            recorder.prepare()
+            recorder.start()
+
+            track.recorder = recorder
+            track.recordingFile = file
+            track.recording = true
+            selectedTrack = track.number
+            projectStatus = "Recording Track ${track.number}"
+
+            notifyUser("Recording started on Track ${track.number}.")
+        } catch (e: Exception) {
+            try {
+                track.recorder?.release()
+            } catch (_: Exception) {
+            }
+
+            track.recorder = null
+            track.recording = false
+
+            notifyUser(
+                "Could not start recording: ${e.localizedMessage ?: "check microphone permission"}"
+            )
+        }
+    }
+
+    fun stopRecording(track: StudioTrack) {
+        if (!track.recording) return
+
+        val file = track.recordingFile
+
+        try {
+            track.recorder?.stop()
+        } catch (_: Exception) {
+            notifyUser(
+                "Recording was too short or could not be finalized."
+            )
+        } finally {
+            try {
+                track.recorder?.reset()
+            } catch (_: Exception) {
+            }
+
+            try {
+                track.recorder?.release()
+            } catch (_: Exception) {
+            }
+
+            track.recorder = null
+            track.recording = false
+        }
+
+        projectStatus = "Recording stopped"
+
+        if (file != null && file.exists() && file.length() > 1000L) {
+            loadRecordedAudio(track, file)
+        } else {
+            notifyUser(
+                "No usable audio was saved. Record for a little longer and try again."
+            )
+        }
+    }
+        val microphonePermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val track = pendingRecordingTrack
+        pendingRecordingTrack = null
+
+        if (granted && track != null) {
+            startRecordingNow(track)
+        } else if (!granted) {
+            notifyUser("Microphone permission is needed to record audio.")
+        }
+    }
+
+    fun requestRecording(track: StudioTrack) {
+        if (track.number == 16) {
+            notifyUser("Track 16 is reserved for your instrumental.")
+            return
+        }
+
+        if (ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.RECORD_AUDIO
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            startRecordingNow(track)
+        } else {
+            pendingRecordingTrack = track
+            microphonePermissionLauncher.launch(
+                Manifest.permission.RECORD_AUDIO
+            )
+        }
+    }
+
     val audioPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri != null) {
             val track = tracks[selectedTrack - 1]
+
+            if (track.recording) {
+                notifyUser(
+                    "Stop recording before importing audio into this track."
+                )
+                return@rememberLauncherForActivityResult
+            }
 
             try {
                 try {
@@ -254,13 +468,17 @@ private fun CoafStudio() {
                 json.put("tracks", array)
 
                 context.contentResolver.openOutputStream(uri)?.use {
-                    it.write(json.toString(2).toByteArray(Charsets.UTF_8))
+                    it.write(
+                        json.toString(2).toByteArray(Charsets.UTF_8)
+                    )
                 }
 
                 projectStatus = "Project saved"
                 notifyUser("Project file saved.")
             } catch (e: Exception) {
-                notifyUser("Save failed: ${e.localizedMessage ?: "unknown error"}")
+                notifyUser(
+                    "Save failed: ${e.localizedMessage ?: "unknown error"}"
+                )
             }
         }
     }
@@ -276,7 +494,11 @@ private fun CoafStudio() {
                     ?: throw IllegalStateException("Unable to read project")
 
                 val json = JSONObject(text)
-                projectName = json.optString("projectName", "My COAF Project")
+                projectName = json.optString(
+                    "projectName",
+                    "My COAF Project"
+                )
+
                 val array = json.optJSONArray("tracks") ?: JSONArray()
 
                 for (i in 0 until array.length()) {
@@ -286,9 +508,11 @@ private fun CoafStudio() {
                     if (number !in 1..16) continue
 
                     val track = tracks[number - 1]
+
                     track.name = item.optString("name", track.name)
                     track.volume = item.optDouble("volume", 1.0)
-                        .toFloat().coerceIn(0f, 1f)
+                        .toFloat()
+                        .coerceIn(0f, 1f)
                     track.muted = item.optBoolean("muted", false)
                     track.solo = item.optBoolean("solo", false)
 
@@ -307,11 +531,13 @@ private fun CoafStudio() {
                             player.setOnPreparedListener { prepared ->
                                 track.player = prepared
                                 track.uri = audioUri
-                                track.duration = prepared.duration.coerceAtLeast(0)
+                                track.duration =
+                                    prepared.duration.coerceAtLeast(0)
                                 track.position = 0
                                 track.loaded = true
 
-                                val gain = if (track.muted) 0f else track.volume
+                                val gain =
+                                    if (track.muted) 0f else track.volume
                                 prepared.setVolume(gain, gain)
                             }
 
@@ -324,8 +550,13 @@ private fun CoafStudio() {
                             player.prepareAsync()
                         } catch (_: Exception) {
                             track.loaded = false
-                            notifyUser("A saved audio file could not be reopened.")
+                            notifyUser(
+                                "A saved audio file could not be reopened."
+                            )
                         }
+                    } else {
+                        track.uri = null
+                        track.loaded = false
                     }
                 }
 
@@ -343,9 +574,22 @@ private fun CoafStudio() {
         onDispose {
             tracks.forEach { track ->
                 try {
+                    track.recorder?.stop()
+                } catch (_: Exception) {
+                }
+
+                try {
+                    track.recorder?.release()
+                } catch (_: Exception) {
+                }
+
+                track.recorder = null
+
+                try {
                     track.player?.release()
                 } catch (_: Exception) {
                 }
+
                 track.player = null
             }
         }
@@ -356,12 +600,17 @@ private fun CoafStudio() {
             tracks.forEach { track ->
                 try {
                     val player = track.player
-                    if (player != null && track.playing && player.isPlaying) {
+
+                    if (player != null &&
+                        track.playing &&
+                        player.isPlaying
+                    ) {
                         track.position = player.currentPosition
                     }
                 } catch (_: Exception) {
                 }
             }
+
             delay(250)
         }
     }
@@ -383,14 +632,18 @@ private fun CoafStudio() {
                 fontSize = 25.sp,
                 fontWeight = FontWeight.Black
             )
+
             Spacer(Modifier.height(4.dp))
+
             Text(
                 "CRUZ OF ALL FLAVORS",
                 color = TextWhite,
                 fontSize = 11.sp,
                 letterSpacing = 3.sp
             )
+
             Spacer(Modifier.height(8.dp))
+
             Text(
                 "A studio for the King of All Flavors 👑",
                 color = MutedText,
@@ -405,7 +658,12 @@ private fun CoafStudio() {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f)) {
-                Text("PROJECT", color = MutedText, fontSize = 10.sp)
+                Text(
+                    "PROJECT",
+                    color = MutedText,
+                    fontSize = 10.sp
+                )
+
                 Text(
                     projectName,
                     color = TextWhite,
@@ -414,11 +672,14 @@ private fun CoafStudio() {
                 )
             }
 
-            OutlinedButton(onClick = {
-                projectName = "COAF Project ${System.currentTimeMillis() % 10000}"
-                projectStatus = "New project"
-                notifyUser("New project created.")
-            }) {
+            OutlinedButton(
+                onClick = {
+                    projectName =
+                        "COAF Project ${System.currentTimeMillis() % 10000}"
+                    projectStatus = "New project"
+                    notifyUser("New project created.")
+                }
+            ) {
                 Text("NEW", color = LightPurple)
             }
         }
@@ -428,7 +689,9 @@ private fun CoafStudio() {
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp),
             shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = PanelBackground)
+            colors = CardDefaults.cardColors(
+                containerColor = PanelBackground
+            )
         ) {
             Column(Modifier.padding(14.dp)) {
                 Text(
@@ -447,7 +710,9 @@ private fun CoafStudio() {
                     Button(
                         onClick = { startPlayback() },
                         modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(containerColor = Purple)
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Purple
+                        )
                     ) {
                         Text("▶ PLAY")
                     }
@@ -470,8 +735,14 @@ private fun CoafStudio() {
                 Spacer(Modifier.height(8.dp))
 
                 Text(
-                    projectStatus,
-                    color = if (isPlaying) TrackGreen else MutedText,
+                    if (tracks.any { it.recording }) {
+                        "Recording in progress…"
+                    } else {
+                        projectStatus
+                    },
+                    color = if (
+                        isPlaying || tracks.any { it.recording }
+                    ) TrackGreen else MutedText,
                     fontSize = 12.sp
                 )
             }
@@ -490,7 +761,11 @@ private fun CoafStudio() {
                 Button(
                     onClick = { currentTab = tab },
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = if (currentTab == tab) Purple else PanelBackground
+                        containerColor = if (currentTab == tab) {
+                            Purple
+                        } else {
+                            PanelBackground
+                        }
                     )
                 ) {
                     Text(tab, fontSize = 11.sp)
@@ -515,6 +790,7 @@ private fun CoafStudio() {
                             fontWeight = FontWeight.Bold,
                             fontSize = 13.sp
                         )
+
                         Text(
                             "Selected: Track $selectedTrack",
                             color = MutedText,
@@ -523,8 +799,12 @@ private fun CoafStudio() {
                     }
 
                     Button(
-                        onClick = { audioPicker.launch(arrayOf("audio/*")) },
-                        colors = ButtonDefaults.buttonColors(containerColor = Purple)
+                        onClick = {
+                            audioPicker.launch(arrayOf("audio/*"))
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Purple
+                        )
                     ) {
                         Text("+ AUDIO")
                     }
@@ -537,15 +817,30 @@ private fun CoafStudio() {
                     verticalArrangement = Arrangement.spacedBy(7.dp),
                     contentPadding = PaddingValues(bottom = 18.dp)
                 ) {
-                    items(items = tracks, key = { it.number }) { track ->
+                    items(
+                        items = tracks,
+                        key = { it.number }
+                    ) { track ->
                         TrackCard(
                             track = track,
                             selected = selectedTrack == track.number,
-                            onSelect = { selectedTrack = track.number },
-                            onMute = { toggleMute(track) },
-                            onSolo = { track.solo = !track.solo },
+                            onSelect = {
+                                selectedTrack = track.number
+                            },
+                            onMute = {
+                                toggleMute(track)
+                            },
+                            onSolo = {
+                                track.solo = !track.solo
+                            },
                             onVolumeChange = { value ->
                                 updateTrackVolume(track, value)
+                            },
+                            onRecord = {
+                                requestRecording(track)
+                            },
+                            onStopRecording = {
+                                stopRecording(track)
                             }
                         )
                     }
@@ -564,7 +859,12 @@ private fun CoafStudio() {
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold
                     )
-                    Text("Individual track levels", color = MutedText)
+
+                    Text(
+                        "Individual track levels",
+                        color = MutedText
+                    )
+
                     Spacer(Modifier.height(10.dp))
 
                     LazyColumn(
@@ -580,12 +880,16 @@ private fun CoafStudio() {
                                 )
                             ) {
                                 Column(Modifier.padding(12.dp)) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Row(
+                                        verticalAlignment =
+                                            Alignment.CenterVertically
+                                    ) {
                                         Text(
                                             "${track.number}. ${track.name}",
-                                               color = TextWhite,
+                                            color = TextWhite,
                                             modifier = Modifier.weight(1f)
                                         )
+
                                         Text(
                                             "${(track.volume * 100).toInt()}%",
                                             color = LightPurple
@@ -601,32 +905,21 @@ private fun CoafStudio() {
                                     )
 
                                     Row(
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        horizontalArrangement =
+                                            Arrangement.spacedBy(8.dp)
                                     ) {
-                                        OutlinedButton(onClick = {
-                                            toggleMute(track)
-                                        }) {
+                                        OutlinedButton(
+                                            onClick = {
+                                                toggleMute(track)
+                                            }
+                                        ) {
                                             Text(
-                                                if (track.muted) "UNMUTE" else "MUTE"
-                                            )
-                                        }
-
-                                        OutlinedButton(onClick = {
-                                            track.solo = !track.solo
-                                        }) {
-                                            Text(
-                                                if (track.solo) "UNSOLO" else "SOLO"
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            "PLUGINS" -> {
+                                                if (track.muted) {
+                                                    "UNMUTE"
+                                                } else {
+                                                    "MUTE"
+                                                }
+                                                      "PLUGINS" -> {
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxSize()
@@ -732,7 +1025,6 @@ private fun CoafStudio() {
                                 Regex("[^A-Za-z0-9_-]"),
                                 "_"
                             )
-
                             saveProjectLauncher.launch("$safeName.json")
                         },
                         modifier = Modifier.fillMaxWidth(),
@@ -756,7 +1048,7 @@ private fun CoafStudio() {
 
                     Text(
                         "Previously imported audio must remain accessible " +
-                            "for its saved reference to work.",
+                            "for its saved reference to work. New recordings are stored inside the app's private files.",
                         color = MutedText,
                         fontSize = 11.sp
                     )
@@ -773,7 +1065,9 @@ private fun TrackCard(
     onSelect: () -> Unit,
     onMute: () -> Unit,
     onSolo: () -> Unit,
-    onVolumeChange: (Float) -> Unit
+    onVolumeChange: (Float) -> Unit,
+    onRecord: () -> Unit,
+    onStopRecording: () -> Unit
 ) {
     Card(
         modifier = Modifier
@@ -836,20 +1130,29 @@ private fun TrackCard(
                     )
 
                     Text(
-                        if (track.loaded) {
-                            "${formatTime(track.position)} / " +
-                                formatTime(track.duration)
-                        } else if (track.number == 16) {
-                            "Import your beat here"
-                        } else {
-                            "Empty track • tap to select"
+                        when {
+                            track.recording -> "● RECORDING"
+                            track.loaded -> "${formatTime(track.position)} / ${formatTime(track.duration)}"
+                            track.number == 16 -> "Import your beat here"
+                            else -> "Empty track • tap to select"
                         },
-                        color = MutedText,
+                        color = if (track.recording) {
+                            Color(0xFFFF7373)
+                        } else {
+                            MutedText
+                        },
                         fontSize = 11.sp
                     )
                 }
 
-                if (track.loaded) {
+                if (track.recording) {
+                    Text(
+                        "REC",
+                        color = Color(0xFFFF7373),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                } else if (track.loaded) {
                     Text(
                         "READY",
                         color = TrackGreen,
@@ -884,18 +1187,37 @@ private fun TrackCard(
             }
 
             Row(
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 OutlinedButton(onClick = onMute) {
-                    Text(
-                        if (track.muted) "UNMUTE" else "MUTE"
-                    )
+                    Text(if (track.muted) "UNMUTE" else "MUTE")
                 }
 
                 OutlinedButton(onClick = onSolo) {
-                    Text(
-                        if (track.solo) "UNSOLO" else "SOLO"
-                    )
+                    Text(if (track.solo) "UNSOLO" else "SOLO")
+                }
+
+                if (track.number != 16) {
+                    if (track.recording) {
+                        Button(
+                            onClick = onStopRecording,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFFB3261E)
+                            )
+                        ) {
+                            Text("■ STOP REC")
+                        }
+                    } else {
+                        Button(
+                            onClick = onRecord,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFFB3261E)
+                            )
+                        ) {
+                            Text("● REC")
+                        }
+                    }
                 }
             }
         }
@@ -908,4 +1230,8 @@ private fun formatTime(milliseconds: Int): String {
     val seconds = totalSeconds % 60
 
     return "%d:%02d".format(minutes, seconds)
-}                                   
+}      
+
+
+                                                
+                                  
