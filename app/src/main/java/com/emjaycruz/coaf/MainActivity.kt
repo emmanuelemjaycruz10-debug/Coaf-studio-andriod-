@@ -722,7 +722,6 @@ private fun CoafStudio() {
                             .padding(horizontal = 12.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-
                         Button(
                             onClick = {
                                 importLauncher.launch(
@@ -733,4 +732,16 @@ private fun CoafStudio() {
                                 )
                             },
                             modifier = Modifier.weight(1f),
-                            colors = Butt
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Purple
+                            )
+                        ) {
+                            Text(
+                                "IMPORT AUDIO",
+                                color = TextWhite
+                            )
+                        }
+                    }
+                }
+
+                // Continue with the remaining sections of your existing code.
