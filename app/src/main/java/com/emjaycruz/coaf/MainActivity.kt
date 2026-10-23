@@ -32,16 +32,6 @@ private val Muted = Color(0xFFAAA4B8)
 private val Green = Color(0xFF51D6A3)
 private val Red = Color(0xFFFF5A70)
 
-class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-
-        setContent {
-            COAFStudioScreen()
-        }
-    }
-}
-
 private data class AudioTrack(
     val number: Int,
     val name: String,
@@ -51,10 +41,17 @@ private data class AudioTrack(
     val volume: Float = 1f
 )
 
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent {
+            COAFStudioScreen()
+        }
+    }
+}
+
 @Composable
 fun COAFStudioScreen() {
-
-    // Correct context reference for loading audio.
     val context = LocalContext.current
 
     var projectName by remember {
@@ -66,7 +63,7 @@ fun COAFStudioScreen() {
     }
 
     var message by remember {
-        mutableStateOf("Your studio is ready.")
+        mutableStateOf("Welcome to COAF Studio.")
     }
 
     var tracks by remember {
@@ -121,49 +118,60 @@ fun COAFStudioScreen() {
         update: (AudioTrack) -> AudioTrack
     ) {
         tracks = tracks.map { track ->
-            if (track.number == number) update(track) else track
+            if (track.number == number) {
+                update(track)
+            } else {
+                track
+            }
         }
     }
 
     fun stopPlayback() {
-        try {
-            player?.stop()
-        } catch (_: Exception) {
-        }
-
-        try {
-            player?.release()
-        } catch (_: Exception) {
-        }
+        val oldPlayer = player
 
         player = null
-        playingTrack = 0
         isPlaying = false
+        playingTrack = 0
         playbackPosition = 0L
         playbackDuration = 0L
         seekPosition = 0f
         isSeeking = false
+
+        try {
+            oldPlayer?.stop()
+        } catch (_: Exception) {
+        }
+
+        try {
+            oldPlayer?.release()
+        } catch (_: Exception) {
+        }
     }
 
     val audioPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri != null) {
-            val trackNumber = selectedImportTrack
-
-            updateTrack(trackNumber) { oldTrack ->
-                oldTrack.copy(uri = uri)
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) {
             }
 
-            message = if (trackNumber == 16) {
+            updateTrack(selectedImportTrack) { track ->
+                track.copy(uri = uri)
+            }
+
+            message = if (selectedImportTrack == 16) {
                 "Instrumental imported into Track 16."
             } else {
-                "Audio imported into Track $trackNumber."
+                "Audio imported into Track $selectedImportTrack."
             }
         }
     }
 
-    // Keep the playback position updated while audio is playing.
     LaunchedEffect(isPlaying, player) {
         while (isPlaying) {
             val activePlayer = player
@@ -184,7 +192,6 @@ fun COAFStudioScreen() {
                         }
                     }
                 } catch (_: Exception) {
-                    // The player may have finished or been released.
                 }
             }
 
@@ -215,7 +222,6 @@ fun COAFStudioScreen() {
                 .verticalScroll(rememberScrollState())
                 .padding(18.dp)
         ) {
-
             Text(
                 text = "C.O.A.F",
                 color = Purple,
@@ -246,7 +252,7 @@ fun COAFStudioScreen() {
                     }
                 ) {
                     Text(
-                        "← BACK TO STUDIO",
+                        text = "← BACK TO STUDIO",
                         color = White
                     )
                 }
@@ -257,9 +263,8 @@ fun COAFStudioScreen() {
             when (currentScreen) {
 
                 "home" -> {
-
                     Text(
-                        "YOUR MUSIC. YOUR SOUND.",
+                        text = "YOUR MUSIC. YOUR SOUND.",
                         color = White,
                         fontSize = 19.sp,
                         fontWeight = FontWeight.Bold
@@ -301,7 +306,7 @@ fun COAFStudioScreen() {
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            "COAF WORKSPACE",
+                            text = "COAF WORKSPACE",
                             color = Purple,
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold
@@ -310,13 +315,13 @@ fun COAFStudioScreen() {
                         Spacer(Modifier.height(12.dp))
 
                         Text(
-                            "▂ ▅ ▃ ▇ ▄ ▆ ▂ ▇ ▃ ▅",
+                            text = "▂ ▅ ▃ ▇ ▄ ▆ ▂ ▇ ▃ ▅",
                             color = Purple,
                             fontSize = 23.sp
                         )
 
                         Text(
-                            "16-track audio workspace",
+                            text = "16-track audio workspace",
                             color = Muted,
                             fontSize = 12.sp
                         )
@@ -334,7 +339,7 @@ fun COAFStudioScreen() {
                         shape = RoundedCornerShape(14.dp)
                     ) {
                         Text(
-                            "♫  OPEN 16-TRACK WORKSPACE",
+                            text = "♫ OPEN 16-TRACK WORKSPACE",
                             fontWeight = FontWeight.Bold
                         )
                     }
@@ -344,16 +349,14 @@ fun COAFStudioScreen() {
                     OutlinedButton(
                         onClick = {
                             selectedImportTrack = 16
-                            audioPicker.launch(
-                                arrayOf("audio/*")
-                            )
+                            audioPicker.launch(arrayOf("audio/*"))
                         },
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(52.dp)
                     ) {
                         Text(
-                            "♫  IMPORT INSTRUMENTAL / MP3",
+                            text = "♫ IMPORT INSTRUMENTAL / MP3",
                             color = White
                         )
                     }
@@ -383,16 +386,15 @@ fun COAFStudioScreen() {
                     Spacer(Modifier.height(18.dp))
 
                     Text(
-                        message,
+                        text = message,
                         color = Muted,
                         fontSize = 13.sp
                     )
                 }
 
                 "tracks" -> {
-
                     Text(
-                        "MULTITRACK WORKSPACE",
+                        text = "MULTITRACK WORKSPACE",
                         color = Purple,
                         fontSize = 23.sp,
                         fontWeight = FontWeight.ExtraBold
@@ -401,7 +403,7 @@ fun COAFStudioScreen() {
                     Spacer(Modifier.height(6.dp))
 
                     Text(
-                        projectName.ifBlank {
+                        text = projectName.ifBlank {
                             "Untitled Project"
                         },
                         color = White,
@@ -410,7 +412,6 @@ fun COAFStudioScreen() {
 
                     Spacer(Modifier.height(16.dp))
 
-                    // Master playback controls.
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -420,9 +421,8 @@ fun COAFStudioScreen() {
                             )
                             .padding(16.dp)
                     ) {
-
                         Text(
-                            if (isPlaying) {
+                            text = if (isPlaying) {
                                 "PLAYING TRACK $playingTrack"
                             } else {
                                 "AUDIO PLAYER"
@@ -440,24 +440,16 @@ fun COAFStudioScreen() {
                                 isSeeking = true
                             },
                             onValueChangeFinished = {
-                                val activePlayer = player
-
-                                if (activePlayer != null &&
-                                    playbackDuration > 0L
-                                ) {
-                                    try {
-                                        activePlayer.seekTo(
+                                try {
+                                    if (playbackDuration > 0L) {
+                                        player?.seekTo(
                                             (
                                                 seekPosition *
                                                 playbackDuration
                                             ).toInt()
                                         )
-
-                                        playbackPosition =
-                                            activePlayer.currentPosition
-                                                .toLong()
-                                    } catch (_: Exception) {
                                     }
+                                } catch (_: Exception) {
                                 }
 
                                 isSeeking = false
@@ -475,13 +467,13 @@ fun COAFStudioScreen() {
                                 Arrangement.SpaceBetween
                         ) {
                             Text(
-                                formatTime(playbackPosition),
+                                text = formatTime(playbackPosition),
                                 color = Muted,
                                 fontSize = 11.sp
                             )
 
                             Text(
-                                formatTime(playbackDuration),
+                                text = formatTime(playbackDuration),
                                 color = Muted,
                                 fontSize = 11.sp
                             )
@@ -497,7 +489,7 @@ fun COAFStudioScreen() {
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(
-                                "STOP PLAYBACK",
+                                text = "STOP PLAYBACK",
                                 color = White
                             )
                         }
@@ -506,7 +498,7 @@ fun COAFStudioScreen() {
                     Spacer(Modifier.height(18.dp))
 
                     Text(
-                        "TRACKS 1–15: VOCALS & OTHER AUDIO",
+                        text = "TRACKS 1–15: VOCALS & OTHER AUDIO",
                         color = Muted,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold
@@ -526,9 +518,8 @@ fun COAFStudioScreen() {
                                 )
                                 .padding(14.dp)
                         ) {
-
                             Text(
-                                "${track.number}. ${track.name}",
+                                text = "${track.number}. ${track.name}",
                                 color = if (track.number == 16) {
                                     Green
                                 } else {
@@ -541,7 +532,7 @@ fun COAFStudioScreen() {
                             Spacer(Modifier.height(6.dp))
 
                             Text(
-                                if (track.uri != null) {
+                                text = if (track.uri != null) {
                                     "Audio file imported"
                                 } else {
                                     "No audio imported"
@@ -557,12 +548,9 @@ fun COAFStudioScreen() {
                                 horizontalArrangement =
                                     Arrangement.spacedBy(8.dp)
                             ) {
-
                                 Button(
                                     onClick = {
-                                        selectedImportTrack =
-                                            track.number
-
+                                        selectedImportTrack = track.number
                                         audioPicker.launch(
                                             arrayOf("audio/*")
                                         )
@@ -570,7 +558,7 @@ fun COAFStudioScreen() {
                                     modifier = Modifier.weight(1f)
                                 ) {
                                     Text(
-                                        "IMPORT",
+                                        text = "IMPORT",
                                         fontSize = 10.sp
                                     )
                                 }
@@ -581,13 +569,12 @@ fun COAFStudioScreen() {
 
                                         if (uri == null) {
                                             message =
-                                                "Import audio into Track " +
-                                                "${track.number} first."
+                                                "Import audio into Track ${track.number} first."
                                         } else {
                                             try {
                                                 if (
                                                     playingTrack ==
-                                                        track.number &&
+                                                    track.number &&
                                                     player != null
                                                 ) {
                                                     if (isPlaying) {
@@ -597,6 +584,4 @@ fun COAFStudioScreen() {
                                                             "Playback paused."
                                                     } else {
                                                         player?.start()
-                                                        isPlaying = true
-                                                        message =
-                                                        
+                                                        is
