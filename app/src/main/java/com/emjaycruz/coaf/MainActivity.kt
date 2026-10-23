@@ -8,6 +8,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -59,7 +60,6 @@ private class StudioTrack(val number: Int) {
         if (number == 16) "BEAT / INSTRUMENTAL"
         else "Audio Track $number"
     )
-
     var uri by mutableStateOf<Uri?>(null)
     var duration by mutableIntStateOf(0)
     var position by mutableIntStateOf(0)
@@ -87,8 +87,20 @@ private fun CoafStudio() {
     var isPlaying by remember { mutableStateOf(false) }
     var projectStatus by remember { mutableStateOf("Ready") }
 
-    fun notify(message: String) {
+    fun notifyUser(message: String) {
         Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+    }
+
+    fun pauseAll() {
+        tracks.forEach { track ->
+            try {
+                track.player?.pause()
+            } catch (_: Exception) {
+            }
+            track.playing = false
+        }
+        isPlaying = false
+        projectStatus = "Paused"
     }
 
     fun stopAll() {
@@ -105,26 +117,15 @@ private fun CoafStudio() {
         projectStatus = "Stopped"
     }
 
-    fun pauseAll() {
-        tracks.forEach { track ->
-            try {
-                track.player?.pause()
-            } catch (_: Exception) {
-            }
-            track.playing = false
-        }
-        isPlaying = false
-        projectStatus = "Paused"
-    }
-
     fun startPlayback() {
         val hasSolo = tracks.any { it.loaded && it.solo }
+
         val playable = tracks.filter {
             it.loaded && !it.muted && (!hasSolo || it.solo)
         }
 
         if (playable.isEmpty()) {
-            notify("Import audio into a track first.")
+            notifyUser("Import audio into a track first.")
             return
         }
 
@@ -132,7 +133,9 @@ private fun CoafStudio() {
             try {
                 val player = track.player ?: return@forEach
 
-                if (track.position >= track.duration && track.duration > 0) {
+                if (track.position >= track.duration &&
+                    track.duration > 0
+                ) {
                     player.seekTo(0)
                     track.position = 0
                 }
@@ -202,7 +205,7 @@ private fun CoafStudio() {
                     val gain = if (track.muted) 0f else track.volume
                     prepared.setVolume(gain, gain)
 
-                    notify("Audio loaded into Track ${track.number}")
+                    notifyUser("Audio loaded into Track ${track.number}")
                 }
 
                 player.setOnCompletionListener {
@@ -213,15 +216,16 @@ private fun CoafStudio() {
                 player.setOnErrorListener { _, _, _ ->
                     track.playing = false
                     track.loaded = false
-                    notify("This audio file could not be played.")
+                    notifyUser("This audio file could not be played.")
                     true
                 }
 
                 player.setDataSource(context, uri)
                 player.prepareAsync()
-
             } catch (e: Exception) {
-                notify("Could not load audio: ${e.localizedMessage ?: "unknown error"}")
+                notifyUser(
+                    "Could not load audio: ${e.localizedMessage ?: "unknown error"}"
+                )
             }
         }
     }
@@ -254,9 +258,9 @@ private fun CoafStudio() {
                 }
 
                 projectStatus = "Project saved"
-                notify("Project file saved.")
+                notifyUser("Project file saved.")
             } catch (e: Exception) {
-                notify("Save failed: ${e.localizedMessage ?: "unknown error"}")
+                notifyUser("Save failed: ${e.localizedMessage ?: "unknown error"}")
             }
         }
     }
@@ -283,8 +287,8 @@ private fun CoafStudio() {
 
                     val track = tracks[number - 1]
                     track.name = item.optString("name", track.name)
-                    track.volume = item.optDouble("volume", 1.0).toFloat()
-                        .coerceIn(0f, 1f)
+                    track.volume = item.optDouble("volume", 1.0)
+                        .toFloat().coerceIn(0f, 1f)
                     track.muted = item.optBoolean("muted", false)
                     track.solo = item.optBoolean("solo", false)
 
@@ -293,16 +297,7 @@ private fun CoafStudio() {
                     if (savedUri.isNotBlank()) {
                         try {
                             val audioUri = Uri.parse(savedUri)
-                            context.contentResolver.openAssetFileDescriptor(
-                                audioUri, "r"
-                            )?.use {
-                                context.contentResolver.takePersistableUriPermission(
-                                    audioUri,
-                                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
-                                )
-                            }
 
-                            track.uri = audioUri
                             track.player?.release()
                             track.player = null
                             track.loaded = false
@@ -311,6 +306,7 @@ private fun CoafStudio() {
 
                             player.setOnPreparedListener { prepared ->
                                 track.player = prepared
+                                track.uri = audioUri
                                 track.duration = prepared.duration.coerceAtLeast(0)
                                 track.position = 0
                                 track.loaded = true
@@ -328,15 +324,17 @@ private fun CoafStudio() {
                             player.prepareAsync()
                         } catch (_: Exception) {
                             track.loaded = false
-                            notify("A saved audio file could not be reopened.")
+                            notifyUser("A saved audio file could not be reopened.")
                         }
                     }
                 }
 
                 projectStatus = "Project loaded"
-                notify("Project settings loaded.")
+                notifyUser("Project settings loaded.")
             } catch (e: Exception) {
-                notify("Could not load project: ${e.localizedMessage ?: "invalid file"}")
+                notifyUser(
+                    "Could not load project: ${e.localizedMessage ?: "invalid file"}"
+                )
             }
         }
     }
@@ -419,7 +417,7 @@ private fun CoafStudio() {
             OutlinedButton(onClick = {
                 projectName = "COAF Project ${System.currentTimeMillis() % 10000}"
                 projectStatus = "New project"
-                notify("New project created.")
+                notifyUser("New project created.")
             }) {
                 Text("NEW", color = LightPurple)
             }
@@ -449,9 +447,7 @@ private fun CoafStudio() {
                     Button(
                         onClick = { startPlayback() },
                         modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Purple
-                        )
+                        colors = ButtonDefaults.buttonColors(containerColor = Purple)
                     ) {
                         Text("▶ PLAY")
                     }
@@ -494,8 +490,7 @@ private fun CoafStudio() {
                 Button(
                     onClick = { currentTab = tab },
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = if (currentTab == tab) Purple
-                        else PanelBackground
+                        containerColor = if (currentTab == tab) Purple else PanelBackground
                     )
                 ) {
                     Text(tab, fontSize = 11.sp)
@@ -529,9 +524,7 @@ private fun CoafStudio() {
 
                     Button(
                         onClick = { audioPicker.launch(arrayOf("audio/*")) },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Purple
-                        )
+                        colors = ButtonDefaults.buttonColors(containerColor = Purple)
                     ) {
                         Text("+ AUDIO")
                     }
@@ -551,8 +544,8 @@ private fun CoafStudio() {
                             onSelect = { selectedTrack = track.number },
                             onMute = { toggleMute(track) },
                             onSolo = { track.solo = !track.solo },
-                            onVolumeChange = {
-                                updateTrackVolume(track, it)
+                            onVolumeChange = { value ->
+                                updateTrackVolume(track, value)
                             }
                         )
                     }
@@ -571,19 +564,23 @@ private fun CoafStudio() {
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold
                     )
-                    Text(
-                        "Individual track levels",
-                        color = MutedText
-                    )
+                    Text("Individual track levels", color = MutedText)
                     Spacer(Modifier.height(10.dp))
 
                     LazyColumn(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        items(tracks.filter { it.loaded }) { track ->
+                        items(
+                            items = tracks.filter { it.loaded },
+                            key = { it.number }
+                        ) { track ->
                             Card(
                                 colors = CardDefaults.cardColors(
                                     containerColor = PanelBackground
                                 )
                             ) {
- 
+                                Column(Modifier.padding(12.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            "${track.number}. ${track.name}",
+                                      
