@@ -583,4 +583,329 @@ private fun CoafStudio() {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text(
                                             "${track.number}. ${track.name}",
-                                      
+                                               color = TextWhite,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        Text(
+                                            "${(track.volume * 100).toInt()}%",
+                                            color = LightPurple
+                                        )
+                                    }
+
+                                    Slider(
+                                        value = track.volume,
+                                        onValueChange = { value ->
+                                            updateTrackVolume(track, value)
+                                        },
+                                        valueRange = 0f..1f
+                                    )
+
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        OutlinedButton(onClick = {
+                                            toggleMute(track)
+                                        }) {
+                                            Text(
+                                                if (track.muted) "UNMUTE" else "MUTE"
+                                            )
+                                        }
+
+                                        OutlinedButton(onClick = {
+                                            track.solo = !track.solo
+                                        }) {
+                                            Text(
+                                                if (track.solo) "UNSOLO" else "SOLO"
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            "PLUGINS" -> {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    contentPadding = PaddingValues(bottom = 20.dp)
+                ) {
+                    item {
+                        Text(
+                            "CRUZ PLUGINS",
+                            color = LightPurple,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+
+                        Spacer(Modifier.height(6.dp))
+
+                        Text(
+                            "These audio-processing plugins are planned, " +
+                                "but are not implemented yet.",
+                            color = MutedText,
+                            fontSize = 12.sp
+                        )
+                    }
+
+                    items(
+                        items = listOf(
+                            "CRUZ Reverb",
+                            "CRUZ Melodyne — Pitch Editor",
+                            "CRUZ AutoTune",
+                            "CRUZ Compressor",
+                            "OptoComp",
+                            "FET Comp",
+                            "Bus Comp",
+                            "CRUZ Delay",
+                            "CRUZ EQ"
+                        )
+                    ) { pluginName ->
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = PanelBackground
+                            )
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(14.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    pluginName,
+                                    color = TextWhite,
+                                    modifier = Modifier.weight(1f)
+                                )
+
+                                Text(
+                                    "PLANNED",
+                                    color = MutedText,
+                                    fontSize = 10.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            "PROJECT" -> {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        "PROJECT FILES",
+                        color = LightPurple,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Text(
+                        "Save or reopen your project settings.",
+                        color = MutedText
+                    )
+
+                    OutlinedTextField(
+                        value = projectName,
+                        onValueChange = { projectName = it },
+                        label = { Text("Project name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = TextWhite,
+                            unfocusedTextColor = TextWhite,
+                            focusedLabelColor = LightPurple,
+                            unfocusedLabelColor = MutedText
+                        )
+                    )
+
+                    Button(
+                        onClick = {
+                            val safeName = projectName.replace(
+                                Regex("[^A-Za-z0-9_-]"),
+                                "_"
+                            )
+
+                            saveProjectLauncher.launch("$safeName.json")
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Purple
+                        )
+                    ) {
+                        Text("SAVE PROJECT")
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            loadProjectLauncher.launch(
+                                arrayOf("application/json", "text/*")
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("OPEN PROJECT", color = TextWhite)
+                    }
+
+                    Text(
+                        "Previously imported audio must remain accessible " +
+                            "for its saved reference to work.",
+                        color = MutedText,
+                        fontSize = 11.sp
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TrackCard(
+    track: StudioTrack,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    onMute: () -> Unit,
+    onSolo: () -> Unit,
+    onVolumeChange: (Float) -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onSelect() },
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (selected) {
+                Color(0xFF302044)
+            } else {
+                PanelBackground
+            }
+        ),
+        border = if (selected) {
+            BorderStroke(1.dp, Purple)
+        } else {
+            null
+        }
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .background(
+                            if (track.number == 16) {
+                                Color(0xFF3B2A12)
+                            } else {
+                                Color(0xFF35234A)
+                            },
+                            RoundedCornerShape(10.dp)
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        track.number.toString().padStart(2, '0'),
+                        color = if (track.number == 16) {
+                            Color(0xFFFFD27D)
+                        } else {
+                            LightPurple
+                        },
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                Spacer(Modifier.width(10.dp))
+
+                Column(
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        track.name,
+                        color = TextWhite,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 13.sp
+                    )
+
+                    Text(
+                        if (track.loaded) {
+                            "${formatTime(track.position)} / " +
+                                formatTime(track.duration)
+                        } else if (track.number == 16) {
+                            "Import your beat here"
+                        } else {
+                            "Empty track • tap to select"
+                        },
+                        color = MutedText,
+                        fontSize = 11.sp
+                    )
+                }
+
+                if (track.loaded) {
+                    Text(
+                        "READY",
+                        color = TrackGreen,
+                        fontSize = 10.sp
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "VOL",
+                    color = MutedText,
+                    fontSize = 10.sp
+                )
+
+                Slider(
+                    value = track.volume,
+                    onValueChange = onVolumeChange,
+                    valueRange = 0f..1f,
+                    modifier = Modifier.weight(1f)
+                )
+
+                Text(
+                    "${(track.volume * 100).toInt()}%",
+                    color = LightPurple,
+                    fontSize = 10.sp
+                )
+            }
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(onClick = onMute) {
+                    Text(
+                        if (track.muted) "UNMUTE" else "MUTE"
+                    )
+                }
+
+                OutlinedButton(onClick = onSolo) {
+                    Text(
+                        if (track.solo) "UNSOLO" else "SOLO"
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun formatTime(milliseconds: Int): String {
+    val totalSeconds = milliseconds.coerceAtLeast(0) / 1000
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+
+    return "%d:%02d".format(minutes, seconds)
+}                                   
