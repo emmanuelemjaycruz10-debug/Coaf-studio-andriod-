@@ -1,5 +1,7 @@
 package com.emjaycruz.coaf
 
+import android.media.AudioAttributes
+import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -19,6 +21,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 
 private val Background = Color(0xFF101014)
 private val Panel = Color(0xFF1D1B25)
@@ -26,6 +29,15 @@ private val Purple = Color(0xFF9B5CFF)
 private val White = Color(0xFFF5F2FA)
 private val Muted = Color(0xFFAAA4B8)
 private val Green = Color(0xFF51D6A3)
+
+private data class AudioTrack(
+    val number: Int,
+    val name: String,
+    val uri: Uri? = null,
+    val muted: Boolean = false,
+    val solo: Boolean = false,
+    val volume: Float = 1f
+)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -46,10 +58,6 @@ fun COAFStudioScreen() {
         mutableStateOf(false)
     }
 
-    var selectedBeat by remember {
-        mutableStateOf<Uri?>(null)
-    }
-
     var currentScreen by remember {
         mutableStateOf("home")
     }
@@ -58,12 +66,126 @@ fun COAFStudioScreen() {
         mutableStateOf("Your studio is ready.")
     }
 
+    var selectedTrack by remember {
+        mutableIntStateOf(16)
+    }
+
+    var tracks by remember {
+        mutableStateOf(
+            (1..16).map { number ->
+                AudioTrack(
+                    number = number,
+                    name = when (number) {
+                        1 -> "Lead Vocal"
+                        2 -> "Vocal Double"
+                        3 -> "Harmony"
+                        4 -> "Background Vocal"
+                        5 -> "Ad-libs"
+                        6 -> "Vocal Layer 2"
+                        7 -> "Vocal Layer 3"
+                        8 -> "Chorus Vocal"
+                        9 -> "Verse Vocal"
+                        10 -> "High Harmony"
+                        11 -> "Low Harmony"
+                        12 -> "Effects Return"
+                        13 -> "Extra Vocal 1"
+                        14 -> "Extra Vocal 2"
+                        15 -> "Extra Audio"
+                        else -> "Instrumental"
+                    }
+                )
+            }
+        )
+    }
+
+    var player by remember {
+        mutableStateOf<MediaPlayer?>(null)
+    }
+
+    var playingTrack by remember {
+        mutableIntStateOf(-1)
+    }
+
+    var isPlaying by remember {
+        mutableStateOf(false)
+    }
+
+    var duration by remember {
+        mutableIntStateOf(0)
+    }
+
+    var position by remember {
+        mutableIntStateOf(0)
+    }
+
+    var seekRequest by remember {
+        mutableIntStateOf(0)
+    }
+
+    var playerError by remember {
+        mutableStateOf<String?>(null)
+    }
+
     val audioPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri != null) {
-            selectedBeat = uri
-            message = "Instrumental imported successfully."
+            val number = selectedTrack
+            val name = if (number == 16) {
+                "Instrumental"
+            } else {
+                tracks[number - 1].name
+            }
+
+            tracks = tracks.toMutableList().also {
+                it[number - 1] = it[number - 1].copy(
+                    name = name,
+                    uri = uri
+                )
+            }
+
+            message = "Audio imported to Track $number."
+            playerError = null
+        }
+    }
+
+    fun stopPlayback() {
+        try {
+            player?.stop()
+        } catch (_: Exception) {
+        }
+
+        player?.release()
+        player = null
+        playingTrack = -1
+        isPlaying = false
+        duration = 0
+        position = 0
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            player?.release()
+            player = null
+        }
+    }
+
+    LaunchedEffect(isPlaying, playingTrack, seekRequest) {
+        while (isPlaying) {
+            val activePlayer = player ?: break
+
+            try {
+                position = activePlayer.currentPosition
+                if (activePlayer.isPlaying.not()) {
+                    isPlaying = false
+                    break
+                }
+            } catch (_: Exception) {
+                isPlaying = false
+                break
+            }
+
+            delay(250)
         }
     }
 
@@ -73,30 +195,30 @@ fun COAFStudioScreen() {
                 .fillMaxSize()
                 .background(Background)
                 .verticalScroll(rememberScrollState())
-                .padding(20.dp)
+                .padding(16.dp)
         ) {
             Text(
-                text = "C.O.A.F",
+                "C.O.A.F",
                 color = Purple,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Bold
             )
 
             Text(
-                text = "STUDIO",
+                "STUDIO",
                 color = White,
                 fontSize = 32.sp,
                 fontWeight = FontWeight.ExtraBold
             )
 
             Text(
-                text = "CRUZ OF ALL FLAVORS",
+                "CRUZ OF ALL FLAVORS",
                 color = Muted,
                 fontSize = 11.sp,
                 letterSpacing = 3.sp
             )
 
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(20.dp))
 
             if (currentScreen != "home") {
                 OutlinedButton(
@@ -105,20 +227,19 @@ fun COAFStudioScreen() {
                     Text("← BACK TO STUDIO", color = White)
                 }
 
-                Spacer(Modifier.height(18.dp))
+                Spacer(Modifier.height(12.dp))
             }
 
             when (currentScreen) {
-
                 "home" -> {
                     Text(
-                        text = "YOUR MUSIC. YOUR SOUND.",
+                        "YOUR MUSIC. YOUR SOUND.",
                         color = White,
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold
                     )
 
-                    Spacer(Modifier.height(16.dp))
+                    Spacer(Modifier.height(12.dp))
 
                     OutlinedTextField(
                         value = projectName,
@@ -137,51 +258,26 @@ fun COAFStudioScreen() {
                         )
                     )
 
-                    Spacer(Modifier.height(20.dp))
+                    Spacer(Modifier.height(16.dp))
 
-                    Box(
+                    Button(
+                        onClick = {
+                            currentScreen = "tracks"
+                        },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(140.dp)
-                            .background(
-                                Panel,
-                                RoundedCornerShape(18.dp)
-                            ),
-                        contentAlignment = Alignment.Center
+                            .height(54.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Purple
+                        )
                     ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text(
-                                text = if (recording)
-                                    "● RECORDING"
-                                else
-                                    "COAF WORKSPACE",
-                                color = if (recording)
-                                    Color(0xFFFF5A70)
-                                else
-                                    Purple,
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-
-                            Spacer(Modifier.height(12.dp))
-
-                            Text(
-                                text = "▂ ▅ ▃ ▇ ▄ ▆ ▂ ▇ ▃ ▅",
-                                color = Purple,
-                                fontSize = 21.sp
-                            )
-
-                            Text(
-                                text = "Your vocal workspace",
-                                color = Muted,
-                                fontSize = 12.sp
-                            )
-                        }
+                        Text(
+                            "🎚 OPEN 16-TRACK STUDIO",
+                            fontWeight = FontWeight.Bold
+                        )
                     }
 
-                    Spacer(Modifier.height(18.dp))
+                    Spacer(Modifier.height(12.dp))
 
                     Button(
                         onClick = {
@@ -194,69 +290,18 @@ fun COAFStudioScreen() {
                         },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(54.dp),
-                        shape = RoundedCornerShape(14.dp),
+                            .height(50.dp),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = if (recording)
+                            containerColor = if (recording) {
                                 Color(0xFFB82F4B)
-                            else
-                                Purple
+                            } else {
+                                Panel
+                            }
                         )
                     ) {
                         Text(
-                            text = if (recording)
-                                "STOP"
-                            else
-                                "● RECORD VOCALS",
-                            fontWeight = FontWeight.Bold
+                            if (recording) "STOP" else "● RECORD VOCALS"
                         )
-                    }
-
-                    Spacer(Modifier.height(12.dp))
-
-                    OutlinedButton(
-                        onClick = {
-                            audioPicker.launch(
-                                arrayOf("audio/*")
-                            )
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(52.dp)
-                    ) {
-                        Text(
-                            "♫  IMPORT BEAT / MP3",
-                            color = White
-                        )
-                    }
-
-                    if (selectedBeat != null) {
-                        Spacer(Modifier.height(12.dp))
-
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(
-                                    Panel,
-                                    RoundedCornerShape(12.dp)
-                                )
-                                .padding(14.dp)
-                        ) {
-                            Text(
-                                "INSTRUMENTAL SELECTED",
-                                color = Green,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp
-                            )
-
-                            Spacer(Modifier.height(6.dp))
-
-                            Text(
-                                selectedBeat.toString(),
-                                color = Muted,
-                                fontSize = 10.sp
-                            )
-                        }
                     }
 
                     Spacer(Modifier.height(12.dp))
@@ -265,38 +310,319 @@ fun COAFStudioScreen() {
                         onClick = {
                             currentScreen = "effects"
                         },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(52.dp)
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(
-                            "♫  CRUZ VOCAL EFFECTS",
-                            color = White
-                        )
+                        Text("♫ CRUZ VOCAL EFFECTS", color = White)
                     }
-
-                    Spacer(Modifier.height(12.dp))
 
                     OutlinedButton(
                         onClick = {
                             currentScreen = "mix"
                         },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(52.dp)
+                        modifier = Modifier.fillMaxWidth()
                     ) {
+                        Text("MIX & MASTER", color = White)
+                    }
+
+                    Spacer(Modifier.height(16.dp))
+
+                    Text(message, color = Muted, fontSize = 13.sp)
+                }
+
+                "tracks" -> {
+                    Text(
+                        "PROJECT TRACKS",
+                        color = Purple,
+                        fontSize = 23.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+
+                    Text(
+                        projectName.ifBlank { "Untitled Project" },
+                        color = Muted,
+                        fontSize = 13.sp
+                    )
+
+                    Spacer(Modifier.height(16.dp))
+
+                    tracks.forEach { track ->
+                        val isSelected = selectedTrack == track.number
+
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 10.dp)
+                                .background(
+                                    if (isSelected) {
+                                        Color(0xFF30233F)
+                                    } else {
+                                        Panel
+                                    },
+                                    RoundedCornerShape(14.dp)
+                                )
+                                .padding(12.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text(
+                                        "TRACK ${
+                                            track.number.toString()
+                                                .padStart(2, '0')
+                                        }",
+                                        color = Purple,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+
+                                    Text(
+                                        track.name,
+                                        color = White,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+
+                                    Text(
+                                        if (track.uri == null) {
+                                            "No audio imported"
+                                        } else {
+                                            "Audio loaded"
+                                        },
+                                        color = if (track.uri != null) {
+                                            Green
+                                        } else {
+                                            Muted
+                                        },
+                                        fontSize = 11.sp
+                                    )
+                                }
+
+                                TextButton(
+                                    onClick = {
+                                        selectedTrack = track.number
+                                        audioPicker.launch(
+                                            arrayOf("audio/*")
+                                        )
+                                    }
+                                ) {
+                                    Text("IMPORT", color = Green)
+                                }
+                            }
+
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                TextButton(
+                                    onClick = {
+                                        selectedTrack = track.number
+                                        if (track.uri == null) {
+                                            message =
+                                                "Import audio into Track ${track.number} first."
+                                            return@TextButton
+                                        }
+
+                                        if (
+                                            playingTrack == track.number &&
+                                            isPlaying
+                                        ) {
+                                            player?.pause()
+                                            isPlaying = false
+                                        } else {
+                                            stopPlayback()
+                                            playerError = null
+
+                                            try {
+                                                val newPlayer = MediaPlayer()
+                                                newPlayer.setAudioAttributes(
+                                                    AudioAttributes.Builder()
+                                                        .setUsage(
+                                                            AudioAttributes.USAGE_MEDIA
+                                                        )
+                                                        .setContentType(
+                                                            AudioAttributes.CONTENT_TYPE_MUSIC
+                                                        )
+                                                        .build()
+                                                )
+
+                                                newPlayer.setDataSource(
+                                                    this@COAFStudioScreen
+                                                        .applicationContext,
+                                                    track.uri
+                                                )
+
+                                                newPlayer.setOnPreparedListener {
+                                                    duration = it.duration
+                                                    player = it
+                                                    playingTrack = track.number
+                                                    it.start()
+                                                    isPlaying = true
+                                                    message =
+                                                        "Playing Track ${track.number}."
+                                                }
+
+                                                newPlayer.setOnCompletionListener {
+                                                    isPlaying = false
+                                                    position = 0
+                                                }
+
+                                                newPlayer.setOnErrorListener { mp, _, _ ->
+                                                    mp.release()
+                                                    player = null
+                                                    isPlaying = false
+                                                    playerError =
+                                                        "Couldn't play this audio file."
+                                                    true
+                                                }
+
+                                                newPlayer.prepareAsync()
+                                                player = newPlayer
+                                            } catch (e: Exception) {
+                                                playerError =
+                                                    "Playback error: ${
+                                                        e.localizedMessage
+                                                            ?: "unsupported file"
+                                                    }"
+                                            }
+                                        }
+                                    }
+                                ) {
+                                    Text(
+                                        if (
+                                            playingTrack == track.number &&
+                                            isPlaying
+                                        ) "PAUSE" else "PLAY",
+                                        color = White
+                                    )
+                                }
+
+                                TextButton(
+                                    onClick = {
+                                        stopPlayback()
+                                        message = "Playback stopped."
+                                    }
+                                ) {
+                                    Text("STOP", color = White)
+                                }
+
+                                TextButton(
+                                    onClick = {
+                                        tracks = tracks.toMutableList().also {
+                                            it[track.number - 1] =
+                                                it[track.number - 1].copy(
+                                                    muted = !track.muted
+                                                )
+                                        }
+                                    }
+                                ) {
+                                    Text(
+                                        if (track.muted) "MUTED" else "MUTE",
+                                        color = if (track.muted) {
+                                            Color(0xFFFF5A70)
+                                        } else {
+                                            Muted
+                                        }
+                                    )
+                                }
+
+                                TextButton(
+                                    onClick = {
+                                        tracks = tracks.map {
+                                            it.copy(
+                                                solo = it.number == track.number &&
+                                                    !track.solo
+                                            )
+                                        }
+                                    }
+                                ) {
+                                    Text(
+                                        if (track.solo) "SOLO" else "SOLO",
+                                        color = if (track.solo) Green else Muted
+                                    )
+                                }
+                            }
+
+                            Text(
+                                "VOLUME  ${(track.volume * 100).toInt()}%",
+                                color = Muted,
+                                fontSize = 11.sp
+                            )
+
+                            Slider(
+                                value = track.volume,
+                                onValueChange = { value ->
+                                    tracks = tracks.toMutableList().also {
+                                        it[track.number - 1] =
+                                            it[track.number - 1].copy(
+                                                volume = value
+                                            )
+                                    }
+
+                                    if (playingTrack == track.number) {
+                                        try {
+                                            player?.setVolume(value, value)
+                                        } catch (_: Exception) {
+                                        }
+                                    }
+                                },
+                                valueRange = 0f..1f,
+                                colors = SliderDefaults.colors(
+                                    thumbColor = Purple,
+                                    activeTrackColor = Purple
+                                )
+                            )
+                        }
+                    }
+
+                    if (playingTrack >= 0 && duration > 0) {
+                        Spacer(Modifier.height(12.dp))
+
                         Text(
-                            "🎚  MIX & MASTER",
-                            color = White
+                            "PLAYBACK POSITION",
+                            color = Purple,
+                            fontWeight = FontWeight.Bold
+                        )
+
+                        Slider(
+                            value = position.coerceIn(0, duration).toFloat(),
+                            onValueChange = {
+                                position = it.toInt()
+                            },
+                            onValueChangeFinished = {
+                                try {
+                                    player?.seekTo(position)
+                                    seekRequest++
+                                } catch (_: Exception) {
+                                }
+                            },
+                            valueRange = 0f..duration.toFloat(),
+                            colors = SliderDefaults.colors(
+                                thumbColor = Purple,
+                                activeTrackColor = Purple
+                            )
+                        )
+
+                        Text(
+                            "${formatTime(position)} / ${formatTime(duration)}",
+                            color = Muted,
+                            fontSize = 12.sp
                         )
                     }
 
-                    Spacer(Modifier.height(18.dp))
+                    playerError?.let {
+                        Spacer(Modifier.height(8.dp))
+                        Text(it, color = Color(0xFFFF5A70))
+                    }
+
+                    Spacer(Modifier.height(14.dp))
 
                     Text(
-                        text = message,
+                        "Note: Tracks can be imported and played individually. " +
+                            "Synchronized multitrack mixing is a future stage.",
                         color = Muted,
-                        fontSize = 13.sp
+                        fontSize = 12.sp
                     )
                 }
 
@@ -308,64 +634,22 @@ fun COAFStudioScreen() {
                         fontWeight = FontWeight.ExtraBold
                     )
 
-                    Text(
-                        "Your signature vocal-processing workspace",
-                        color = Muted,
-                        fontSize = 13.sp
-                    )
-
-                    Spacer(Modifier.height(22.dp))
-
-                    PluginCard(
-                        "CRUZ REVERB",
-                        "Room size • Decay • Wet/Dry"
-                    )
-
-                    PluginCard(
-                        "CRUZ MELODYNE",
-                        "Graphical pitch editing"
-                    )
-
-                    PluginCard(
-                        "CRUZ AUTOTUNE",
-                        "Key • Scale • Retune speed"
-                    )
-
-                    PluginCard(
-                        "CRUZ COMPRESSOR",
-                        "Dynamics and vocal control"
-                    )
-
-                    PluginCard(
-                        "CRUZ OPTOCOMP",
-                        "Smooth vocal levelling"
-                    )
-
-                    PluginCard(
-                        "CRUZ FET COMP",
-                        "Punchy vocal compression"
-                    )
-
-                    PluginCard(
-                        "CRUZ BUS COMP",
-                        "Glue and cohesion"
-                    )
-
-                    PluginCard(
-                        "CRUZ DELAY",
-                        "Time • Feedback • Stereo"
-                    )
-
-                    PluginCard(
-                        "CRUZ EQ",
-                        "Frequency and tone shaping"
-                    )
-
-                    Spacer(Modifier.height(14.dp))
+                    listOf(
+                        "CRUZ REVERB" to "Room size • Decay • Wet/Dry",
+                        "CRUZ MELODYNE" to "Graphical pitch editing",
+                        "CRUZ AUTOTUNE" to "Key • Scale • Retune speed",
+                        "CRUZ COMPRESSOR" to "Dynamics and vocal control",
+                        "CRUZ OPTOCOMP" to "Smooth vocal levelling",
+                        "CRUZ FET COMP" to "Punchy vocal compression",
+                        "CRUZ BUS COMP" to "Glue and cohesion",
+                        "CRUZ DELAY" to "Time • Feedback • Stereo",
+                        "CRUZ EQ" to "Frequency and tone shaping"
+                    ).forEach { (name, description) ->
+                        PluginCard(name, description)
+                    }
 
                     Text(
-                        "Plugin interfaces and audio processing " +
-                            "will be implemented in upcoming stages.",
+                        "Audio processing for these plugins is still to be implemented.",
                         color = Muted,
                         fontSize = 12.sp
                     )
@@ -379,73 +663,35 @@ fun COAFStudioScreen() {
                         fontWeight = FontWeight.ExtraBold
                     )
 
-                    Spacer(Modifier.height(8.dp))
-
-                    Text(
-                        "PROJECT",
-                        color = Muted,
-                        fontSize = 11.sp
-                    )
-
-                    Text(
-                        projectName.ifBlank { "Untitled Project" },
-                        color = White,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-
-                    Spacer(Modifier.height(20.dp))
-
                     PluginCard(
-                        "VOCAL TRACK",
-                        "Your recorded vocal"
+                        "16-TRACK PROJECT",
+                        "Open the track list to import and play audio."
                     )
-
-                    PluginCard(
-                        "INSTRUMENTAL TRACK",
-                        if (selectedBeat != null)
-                            "Beat selected"
-                        else
-                            "No instrumental imported"
-                    )
-
-                    PluginCard(
-                        "MASTER CHANNEL",
-                        "Final output processing"
-                    )
-
-                    Spacer(Modifier.height(14.dp))
 
                     Button(
                         onClick = {
-                            audioPicker.launch(
-                                arrayOf("audio/*")
-                            )
+                            currentScreen = "tracks"
                         },
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = Purple
                         )
                     ) {
-                        Text("IMPORT INSTRUMENTAL")
+                        Text("OPEN TRACKS")
                     }
 
-                    Spacer(Modifier.height(12.dp))
-
                     Text(
-                        "Multitrack playback, effect routing, " +
-                            "mixing and audio export are planned " +
-                            "for the audio-engine stages.",
+                        "Synchronized mixing and audio export are not implemented yet.",
                         color = Muted,
                         fontSize = 12.sp
                     )
                 }
             }
 
-            Spacer(Modifier.height(30.dp))
+            Spacer(Modifier.height(24.dp))
 
             Text(
-                text = "MADE FOR THE KING OF ALL FLAVORS 👑",
+                "MADE FOR THE KING OF ALL FLAVORS 👑",
                 color = Purple,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
@@ -453,6 +699,13 @@ fun COAFStudioScreen() {
             )
         }
     }
+}
+
+private fun formatTime(milliseconds: Int): String {
+    val totalSeconds = (milliseconds / 1000).coerceAtLeast(0)
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    return "%d:%02d".format(minutes, seconds)
 }
 
 @Composable
@@ -464,14 +717,11 @@ private fun PluginCard(
         modifier = Modifier
             .fillMaxWidth()
             .padding(bottom = 12.dp)
-            .background(
-                Panel,
-                RoundedCornerShape(14.dp)
-            )
+            .background(Panel, RoundedCornerShape(14.dp))
             .padding(16.dp)
     ) {
         Text(
-            text = name,
+            name,
             color = Purple,
             fontSize = 15.sp,
             fontWeight = FontWeight.Bold
@@ -480,7 +730,7 @@ private fun PluginCard(
         Spacer(Modifier.height(6.dp))
 
         Text(
-            text = description,
+            description,
             color = Muted,
             fontSize = 12.sp
         )
