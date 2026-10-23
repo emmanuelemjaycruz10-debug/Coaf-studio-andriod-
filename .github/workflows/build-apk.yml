@@ -1,6 +1,6 @@
 name: Build COAF Studio APK
 
-'on':
+on:
 workflow_dispatch:
 push:
 branches:
