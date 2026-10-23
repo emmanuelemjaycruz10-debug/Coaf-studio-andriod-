@@ -1,10 +1,6 @@
 package com.emjaycruz.coaf
 
-import android.Manifest
-import android.content.Context
-import android.content.pm.PackageManager
 import android.media.MediaPlayer
-import android.media.MediaRecorder
 import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
@@ -15,13 +11,14 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -29,11 +26,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.ContextCompat
 import kotlinx.coroutines.delay
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.File
 
 private val StudioBackground = Color(0xFF100D18)
 private val PanelBackground = Color(0xFF20182C)
@@ -42,7 +37,6 @@ private val LightPurple = Color(0xFFD0B5FF)
 private val TextWhite = Color(0xFFF7F2FF)
 private val MutedText = Color(0xFFB7AFC4)
 private val TrackGreen = Color(0xFF72E0B0)
-private val RecordRed = Color(0xFFB3261E)
 
 class MainActivity : ComponentActivity() {
 
@@ -77,11 +71,8 @@ private class StudioTrack(val number: Int) {
     var solo by mutableStateOf(false)
     var loaded by mutableStateOf(false)
     var playing by mutableStateOf(false)
-    var recording by mutableStateOf(false)
 
     var player: MediaPlayer? = null
-    var recorder: MediaRecorder? = null
-    var recordingFile: File? = null
 }
 
 @Composable
@@ -100,112 +91,48 @@ private fun CoafStudio() {
     var selectedTrack by remember { mutableIntStateOf(1) }
     var currentTab by remember { mutableStateOf("TRACKS") }
     var projectName by remember { mutableStateOf("My COAF Project") }
-    var projectStatus by remember { mutableStateOf("Ready") }
     var isPlaying by remember { mutableStateOf(false) }
+    var projectStatus by remember { mutableStateOf("Ready") }
 
     fun notifyUser(message: String) {
-        Toast.makeText(
-            context,
-            message,
-            Toast.LENGTH_SHORT
-        ).show()
-    }
-
-    fun stopPlayer(track: StudioTrack, reset: Boolean = false) {
-        try {
-            track.player?.let { player ->
-                if (player.isPlaying) player.pause()
-                if (reset) player.seekTo(0)
-            }
-        } catch (_: Exception) {
-        }
-
-        track.playing = false
-
-        if (reset) track.position = 0
-    }
-
-    fun stopAll() {
-        tracks.forEach { track ->
-            stopPlayer(track, reset = true)
-        }
-
-        isPlaying = false
-        projectStatus = "Stopped"
+        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
     }
 
     fun pauseAll() {
         tracks.forEach { track ->
-            stopPlayer(track)
+            try {
+                track.player?.pause()
+            } catch (_: Exception) {
+            }
+
+            track.playing = false
         }
 
         isPlaying = false
         projectStatus = "Paused"
     }
 
-    fun applyVolume(track: StudioTrack) {
-        val gain = if (track.muted) 0f else track.volume
+    fun stopAll() {
+        tracks.forEach { track ->
+            try {
+                track.player?.pause()
+                track.player?.seekTo(0)
+            } catch (_: Exception) {
+            }
 
-        try {
-            track.player?.setVolume(gain, gain)
-        } catch (_: Exception) {
+            track.position = 0
+            track.playing = false
         }
-    }
 
-    fun loadAudio(
-        track: StudioTrack,
-        uri: Uri,
-        displayName: String
-    ) {
-        try {
-            track.player?.release()
-            track.player = null
-            track.loaded = false
-
-            val player = MediaPlayer()
-
-            player.setOnPreparedListener { prepared ->
-                track.player = prepared
-                track.uri = uri
-                track.duration = prepared.duration.coerceAtLeast(0)
-                track.position = 0
-                track.name = displayName.take(45)
-                track.loaded = true
-                track.playing = false
-
-                applyVolume(track)
-
-                notifyUser(
-                    "Audio loaded on Track ${track.number}."
-                )
-            }
-
-            player.setOnCompletionListener {
-                track.playing = false
-                track.position = track.duration
-            }
-
-            player.setOnErrorListener { _, _, _ ->
-                track.loaded = false
-                track.playing = false
-
-                notifyUser("Could not play this audio file.")
-                true
-            }
-
-            player.setDataSource(context, uri)
-            player.prepareAsync()
-
-        } catch (e: Exception) {
-            notifyUser(
-                "Audio error: ${e.localizedMessage ?: "unknown error"}"
-            )
-        }
+        isPlaying = false
+        projectStatus = "Stopped"
     }
 
     fun startPlayback() {
 
-        val hasSolo = tracks.any { it.loaded && it.solo }
+        val hasSolo = tracks.any {
+            it.loaded && it.solo
+        }
 
         val playable = tracks.filter {
             it.loaded &&
@@ -214,7 +141,7 @@ private fun CoafStudio() {
         }
 
         if (playable.isEmpty()) {
-            notifyUser("Import audio or record a track first.")
+            notifyUser("Import audio into a track first.")
             return
         }
 
@@ -223,8 +150,8 @@ private fun CoafStudio() {
                 val player = track.player ?: return@forEach
 
                 if (
-                    track.duration > 0 &&
-                    track.position >= track.duration
+                    track.position >= track.duration &&
+                    track.duration > 0
                 ) {
                     player.seekTo(0)
                     track.position = 0
@@ -244,377 +171,310 @@ private fun CoafStudio() {
         projectStatus = "Playing"
     }
 
-    fun loadRecording(track: StudioTrack, file: File) {
-        loadAudio(
-            track = track,
-            uri = Uri.fromFile(file),
-            displayName = file.nameWithoutExtension
-        )
-    }
+    fun updateTrackVolume(
+        track: StudioTrack,
+        value: Float
+    ) {
+        track.volume = value
 
-    fun startRecording(track: StudioTrack) {
-
-        if (track.number == 16) {
-            notifyUser(
-                "Track 16 is reserved for your instrumental."
-            )
-            return
-        }
-
-        if (tracks.any { it.recording }) {
-            notifyUser(
-                "Stop the current recording first."
-            )
-            return
-        }
+        val gain = if (track.muted) 0f else value
 
         try {
-            track.player?.release()
-            track.player = null
-            track.loaded = false
-            track.uri = null
-            track.position = 0
-            track.duration = 0
-
-            val directory = File(
-                context.getExternalFilesDir(null),
-                "COAF_Recordings"
-            )
-
-            if (!directory.exists() && !directory.mkdirs()) {
-                throw IllegalStateException(
-                    "Could not create recording folder."
-                )
-            }
-
-            val file = File(
-                directory,
-                "COAF_Track_${track.number}_${System.currentTimeMillis()}.m4a"
-            )
-
-            val recorder = MediaRecorder(context)
-
-            recorder.setAudioSource(
-                MediaRecorder.AudioSource.MIC
-            )
-
-            recorder.setOutputFormat(
-                MediaRecorder.OutputFormat.MPEG_4
-            )
-
-            recorder.setAudioEncoder(
-                MediaRecorder.AudioEncoder.AAC
-            )
-
-            recorder.setAudioEncodingBitRate(192000)
-            recorder.setAudioSamplingRate(44100)
-            recorder.setOutputFile(file.absolutePath)
-
-            recorder.prepare()
-            recorder.start()
-
-            track.recorder = recorder
-            track.recordingFile = file
-            track.recording = true
-
-            selectedTrack = track.number
-            projectStatus = "Recording Track ${track.number}"
-
-            notifyUser(
-                "Recording started on Track ${track.number}."
-            )
-
-        } catch (e: Exception) {
-
-            try {
-                track.recorder?.release()
-            } catch (_: Exception) {
-            }
-
-            track.recorder = null
-            track.recording = false
-
-            notifyUser(
-                "Recording failed: ${
-                    e.localizedMessage ?: "check microphone permission"
-                }"
-            )
-        }
-    }
-
-    fun stopRecording(track: StudioTrack) {
-
-        if (!track.recording) return
-
-        val file = track.recordingFile
-
-        try {
-            track.recorder?.stop()
+            track.player?.setVolume(gain, gain)
         } catch (_: Exception) {
-            notifyUser(
-                "Recording was too short to save correctly."
-            )
-        } finally {
+        }
+    }
+
+    fun toggleMute(track: StudioTrack) {
+
+        track.muted = !track.muted
+
+        val gain = if (track.muted) 0f else track.volume
+
+        try {
+            track.player?.setVolume(gain, gain)
+        } catch (_: Exception) {
+        }
+    }
+
+    val audioPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+
+        if (uri != null) {
+
+            val track = tracks[selectedTrack - 1]
 
             try {
-                track.recorder?.release()
-            } catch (_: Exception) {
-            }
-
-            track.recorder = null
-            track.recording = false
-        }
-
-        projectStatus = "Recording stopped"
-
-        if (file != null && file.exists() && file.length() > 1000L) {
-            loadRecording(track, file)
-        } else {
-            notifyUser(
-                "No usable recording was saved. Try recording longer."
-            )
-        }
-    }
-
-    fun saveProject(uri: Uri) {
-
-        try {
-            val root = JSONObject()
-
-            root.put("projectName", projectName)
-
-            val array = JSONArray()
-
-            tracks.forEach { track ->
-
-                val item = JSONObject()
-
-                item.put("number", track.number)
-                item.put("name", track.name)
-                item.put("uri", track.uri?.toString() ?: "")
-                item.put("volume", track.volume.toDouble())
-                item.put("muted", track.muted)
-                item.put("solo", track.solo)
-
-                array.put(item)
-            }
-
-            root.put("tracks", array)
-
-            context.contentResolver.openOutputStream(uri)?.use {
-                it.write(root.toString(2).toByteArray(Charsets.UTF_8))
-            } ?: throw IllegalStateException(
-                "Could not write project file."
-            )
-
-            notifyUser("Project saved.")
-
-        } catch (e: Exception) {
-            notifyUser(
-                "Save failed: ${e.localizedMessage ?: "unknown error"}"
-            )
-        }
-    }
-
-    fun openProject(uri: Uri) {
-
-        try {
-            val json = context.contentResolver
-                .openInputStream(uri)
-                ?.bufferedReader()
-                ?.use { it.readText() }
-                ?: throw IllegalStateException(
-                    "Could not read project file."
-                )
-
-            val root = JSONObject(json)
-
-            projectName = root.optString(
-                "projectName",
-                "My COAF Project"
-            )
-
-            val array = root.optJSONArray("tracks")
-                ?: JSONArray()
-
-            for (i in 0 until array.length()) {
-
-                val item = array.optJSONObject(i) ?: continue
-                val number = item.optInt("number", -1)
-
-                val track = tracks.firstOrNull {
-                    it.number == number
-                } ?: continue
-
-                track.name = item.optString(
-                    "name",
-                    "Audio Track $number"
-                )
-
-                track.volume = item.optDouble(
-                    "volume",
-                    1.0
-                ).toFloat().coerceIn(0f, 1f)
-
-                track.muted = item.optBoolean("muted", false)
-                track.solo = item.optBoolean("solo", false)
-
-                val uriText = item.optString("uri", "")
-
-                if (uriText.isNotBlank()) {
-                    try {
-                        val audioUri = Uri.parse(uriText)
-
-                        loadAudio(
-                            track,
-                            audioUri,
-                            track.name
-                        )
-
-                    } catch (_: Exception) {
-                        track.loaded = false
-                    }
-                }
-            }
-
-            notifyUser(
-                "Project settings opened. Check audio access."
-            )
-
-        } catch (e: Exception) {
-            notifyUser(
-                "Open failed: ${e.localizedMessage ?: "invalid project"}"
-            )
-        }
-    }
-
-    val importLauncher =
-        rememberLauncherForActivityResult(
-            ActivityResultContracts.OpenDocument()
-        ) { uri ->
-
-            if (uri != null) {
 
                 try {
-                    context.contentResolver
-                        .takePersistableUriPermission(
-                            uri,
-                            android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
-                        )
+                    context.contentResolver.takePersistableUriPermission(
+                        uri,
+                        android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
                 } catch (_: Exception) {
                 }
 
-                val track = tracks.firstOrNull {
-                    it.number == selectedTrack
-                }
+                track.player?.release()
+                track.player = null
+                track.loaded = false
+                track.playing = false
 
-                if (track != null) {
-                    loadAudio(
-                        track,
-                        uri,
-                        "Imported Track ${track.number}"
+                val player = MediaPlayer()
+
+                player.setOnPreparedListener { prepared ->
+
+                    track.player = prepared
+                    track.uri = uri
+                    track.duration = prepared.duration.coerceAtLeast(0)
+                    track.position = 0
+
+                    track.name = uri.lastPathSegment
+                        ?.substringAfterLast('/')
+                        ?.take(32)
+                        ?: "Imported Audio"
+
+                    track.loaded = true
+
+                    val gain = if (track.muted) 0f else track.volume
+
+                    prepared.setVolume(gain, gain)
+
+                    notifyUser(
+                        "Audio loaded into Track ${track.number}"
                     )
                 }
-            }
-        }
 
-    val saveProjectLauncher =
-        rememberLauncherForActivityResult(
-            ActivityResultContracts.CreateDocument(
-                "application/json"
-            )
-        ) { uri ->
-            if (uri != null) saveProject(uri)
-        }
+                player.setOnCompletionListener {
 
-    val openProjectLauncher =
-        rememberLauncherForActivityResult(
-            ActivityResultContracts.OpenDocument()
-        ) { uri ->
-            if (uri != null) openProject(uri)
-        }
+                    track.playing = false
+                    track.position = track.duration
+                }
 
-    var pendingRecordingTrack by remember {
-        mutableStateOf<StudioTrack?>(null)
-    }
+                player.setOnErrorListener { _, _, _ ->
 
-    val microphonePermissionLauncher =
-        rememberLauncherForActivityResult(
-            ActivityResultContracts.RequestPermission()
-        ) { granted ->
+                    track.playing = false
+                    track.loaded = false
 
-            val track = pendingRecordingTrack
-            pendingRecordingTrack = null
+                    notifyUser("This audio file could not be played.")
 
-            if (granted && track != null) {
-                startRecording(track)
-            } else {
+                    true
+                }
+
+                player.setDataSource(context, uri)
+                player.prepareAsync()
+
+            } catch (e: Exception) {
+
                 notifyUser(
-                    "Microphone permission is required to record."
+                    "Could not load audio: " +
+                        (e.localizedMessage ?: "unknown error")
                 )
             }
         }
+    }
 
-    fun requestRecording(track: StudioTrack) {
-
-        val permission = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.RECORD_AUDIO
+    val saveProjectLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument(
+            "application/json"
         )
+    ) { uri ->
 
-        if (permission == PackageManager.PERMISSION_GRANTED) {
-            startRecording(track)
-        } else {
-            pendingRecordingTrack = track
+        if (uri != null) {
 
-            microphonePermissionLauncher.launch(
-                Manifest.permission.RECORD_AUDIO
-            )
+            try {
+
+                val json = JSONObject()
+
+                json.put("projectName", projectName)
+
+                val array = JSONArray()
+
+                tracks.forEach { track ->
+
+                    val item = JSONObject()
+
+                    item.put("number", track.number)
+                    item.put("name", track.name)
+                    item.put("uri", track.uri?.toString() ?: "")
+                    item.put("volume", track.volume.toDouble())
+                    item.put("muted", track.muted)
+                    item.put("solo", track.solo)
+
+                    array.put(item)
+                }
+
+                json.put("tracks", array)
+
+                context.contentResolver.openOutputStream(uri)?.use {
+                    it.write(
+                        json.toString(2).toByteArray(Charsets.UTF_8)
+                    )
+                } ?: throw IllegalStateException(
+                    "Unable to create project file"
+                )
+
+                projectStatus = "Project saved"
+                notifyUser("Project file saved.")
+
+            } catch (e: Exception) {
+
+                notifyUser(
+                    "Save failed: " +
+                        (e.localizedMessage ?: "unknown error")
+                )
+            }
+        }
+    }
+
+    val loadProjectLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+
+        if (uri != null) {
+
+            try {
+
+                val text = context.contentResolver
+                    .openInputStream(uri)
+                    ?.bufferedReader()
+                    ?.use { it.readText() }
+                    ?: throw IllegalStateException(
+                        "Unable to read project"
+                    )
+
+                val json = JSONObject(text)
+
+                projectName = json.optString(
+                    "projectName",
+                    "My COAF Project"
+                )
+
+                val array = json.optJSONArray("tracks") ?: JSONArray()
+
+                for (i in 0 until array.length()) {
+
+                    val item = array.optJSONObject(i) ?: continue
+
+                    val number = item.optInt("number", -1)
+
+                    if (number !in 1..16) continue
+
+                    val track = tracks[number - 1]
+
+                    track.name = item.optString(
+                        "name",
+                        track.name
+                    )
+
+                    track.volume = item.optDouble(
+                        "volume",
+                        1.0
+                    ).toFloat().coerceIn(0f, 1f)
+
+                    track.muted = item.optBoolean("muted", false)
+                    track.solo = item.optBoolean("solo", false)
+
+                    val savedUri = item.optString("uri", "")
+
+                    if (savedUri.isNotBlank()) {
+
+                        try {
+
+                            val audioUri = Uri.parse(savedUri)
+
+                            track.player?.release()
+                            track.player = null
+                            track.loaded = false
+                            track.playing = false
+
+                            val player = MediaPlayer()
+
+                            player.setOnPreparedListener { prepared ->
+
+                                track.player = prepared
+                                track.uri = audioUri
+
+                                track.duration =
+                                    prepared.duration.coerceAtLeast(0)
+
+                                track.position = 0
+                                track.loaded = true
+
+                                val gain =
+                                    if (track.muted) 0f
+                                    else track.volume
+
+                                prepared.setVolume(gain, gain)
+                            }
+
+                            player.setOnErrorListener { _, _, _ ->
+
+                                track.loaded = false
+                                true
+                            }
+
+                            player.setDataSource(context, audioUri)
+                            player.prepareAsync()
+
+                        } catch (_: Exception) {
+
+                            track.loaded = false
+
+                            notifyUser(
+                                "A saved audio file could not be reopened."
+                            )
+                        }
+                    }
+                }
+
+                projectStatus = "Project loaded"
+                notifyUser("Project settings loaded.")
+
+            } catch (e: Exception) {
+
+                notifyUser(
+                    "Could not load project: " +
+                        (e.localizedMessage ?: "invalid file")
+                )
+            }
         }
     }
 
     DisposableEffect(Unit) {
+
         onDispose {
 
             tracks.forEach { track ->
-
-                try {
-                    if (track.recording) {
-                        track.recorder?.stop()
-                    }
-                } catch (_: Exception) {
-                }
-
-                try {
-                    track.recorder?.release()
-                } catch (_: Exception) {
-                }
 
                 try {
                     track.player?.release()
                 } catch (_: Exception) {
                 }
 
-                track.recording = false
-                track.recorder = null
                 track.player = null
+                track.loaded = false
+                track.playing = false
             }
         }
     }
 
-    LaunchedEffect(isPlaying) {
+    LaunchedEffect(tracks) {
 
-        while (isPlaying) {
+        while (true) {
 
             tracks.forEach { track ->
 
                 try {
+
                     val player = track.player
 
-                    if (player != null && player.isPlaying) {
+                    if (
+                        player != null &&
+                        track.playing &&
+                        player.isPlaying
+                    ) {
                         track.position = player.currentPosition
-                    } else if (track.playing) {
-                        track.playing = false
                     }
 
                 } catch (_: Exception) {
@@ -631,48 +491,156 @@ private fun CoafStudio() {
             .background(StudioBackground)
     ) {
 
+        // HEADER
+
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(PanelBackground)
-                .padding(16.dp)
+                .padding(18.dp)
         ) {
 
             Text(
                 "COAF STUDIO",
                 color = LightPurple,
                 fontSize = 25.sp,
-                fontWeight = FontWeight.ExtraBold
+                fontWeight = FontWeight.Black
             )
+
+            Spacer(Modifier.height(4.dp))
 
             Text(
                 "CRUZ OF ALL FLAVORS",
-                color = MutedText,
-                fontSize = 11.sp,
-                letterSpacing = 2.sp
-            )
-
-            Spacer(Modifier.height(12.dp))
-
-            Text(
-                projectName,
                 color = TextWhite,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.Bold
+                fontSize = 11.sp,
+                letterSpacing = 3.sp
             )
 
+            Spacer(Modifier.height(8.dp))
+
             Text(
-                projectStatus,
-                color = TrackGreen,
+                "A studio for the King of All Flavors 👑",
+                color = MutedText,
                 fontSize = 12.sp
             )
         }
 
+        // PROJECT HEADER
+
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                .padding(
+                    horizontal = 14.dp,
+                    vertical = 10.dp
+                ),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+
+            Column(Modifier.weight(1f)) {
+
+                Text(
+                    "PROJECT",
+                    color = MutedText,
+                    fontSize = 10.sp
+                )
+
+                Text(
+                    projectName,
+                    color = TextWhite,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                )
+            }
+
+            OutlinedButton(
+                onClick = {
+
+                    projectName =
+                        "COAF Project ${System.currentTimeMillis() % 10000}"
+
+                    projectStatus = "New project"
+
+                    notifyUser("New project created.")
+                }
+            ) {
+                Text("NEW", color = LightPurple)
+            }
+        }
+
+        // TRANSPORT CONTROLS
+
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = PanelBackground
+            )
+        ) {
+
+            Column(Modifier.padding(14.dp)) {
+
+                Text(
+                    "TRANSPORT",
+                    color = LightPurple,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp
+                )
+
+                Spacer(Modifier.height(10.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+
+                    Button(
+                        onClick = { startPlayback() },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Purple
+                        )
+                    ) {
+                        Text("▶ PLAY")
+                    }
+
+                    OutlinedButton(
+                        onClick = { pauseAll() },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Ⅱ PAUSE", color = TextWhite)
+                    }
+
+                    OutlinedButton(
+                        onClick = { stopAll() },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("■ STOP", color = TextWhite)
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+
+                Text(
+                    projectStatus,
+                    color = if (isPlaying) TrackGreen else MutedText,
+                    fontSize = 12.sp
+                )
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        // NAVIGATION TABS
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
 
             listOf(
@@ -682,66 +650,71 @@ private fun CoafStudio() {
                 "PROJECT"
             ).forEach { tab ->
 
-                val selected = currentTab == tab
-
                 Button(
                     onClick = { currentTab = tab },
-                    modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(
-                        horizontal = 4.dp,
-                        vertical = 8.dp
-                    ),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = if (selected) {
-                            Purple
-                        } else {
-                            PanelBackground
-                        }
+                        containerColor =
+                            if (currentTab == tab) Purple
+                            else PanelBackground
                     )
                 ) {
-                    Text(
-                        tab,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Text(tab, fontSize = 11.sp)
                 }
             }
         }
 
+        Spacer(Modifier.height(8.dp))
+
+        // TAB CONTENT
+        // Each tab is a separate branch of this when statement.
+
         when (currentTab) {
+
+            // TRACKS
 
             "TRACKS" -> {
 
-                Column(
-                    modifier = Modifier.weight(1f)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(
+                            horizontal = 14.dp,
+                            vertical = 6.dp
+                        ),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
 
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    Column(Modifier.weight(1f)) {
+
+                        Text(
+                            "MULTITRACK WORKSPACE",
+                            color = TextWhite,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp
+                        )
+
+                        Text(
+                            "Selected: Track $selectedTrack",
+                            color = MutedText,
+                            fontSize = 11.sp
+                        )
+                    }
+
+                    Button(
+                        onClick = {
+                            audioPicker.launch(arrayOf("audio/*"))
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Purple
+                        )
                     ) {
-                        Button(
-                            onClick = {
-                                importLauncher.launch(
-                                    arrayOf(
-                                        "audio/*",
-                                        "application/octet-stream"
-                                    )
-                                )
-                            },
-                            modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Purple
-                            )
-                        ) {
-                            Text(
-                                "IMPORT AUDIO",
-                                color = TextWhite
-                            )
-                        }
+                        Text("+ AUDIO")
                     }
                 }
 
-                // Continue with the remaining sections of your existing code.
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(7.dp),
+                    contentPadding 
