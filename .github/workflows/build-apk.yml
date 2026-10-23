@@ -1,6 +1,6 @@
 name: Build COAF Studio APK
 
-on:
+'on':
 workflow_dispatch:
 push:
 branches:
@@ -36,16 +36,20 @@ steps:
       yes | sdkmanager --licenses
       sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
-  - name: Check Android module
+  - name: Diagnose Gradle project
     run: |
-      echo "Root files:"
+      echo "Current directory:"
+      pwd
+      echo "Files in repository root:"
       ls -la
       echo "First app folder:"
-      ls -la app
+      ls -la app || true
       echo "Second app folder:"
       ls -la app/app || true
-      echo "Android module build files:"
+      echo "Gradle build files:"
       find . -name build.gradle.kts -not -path './.git/*'
+      echo "Gradle tasks available:"
+      gradle tasks --all
 
   - name: Build APK
     run: gradle :app:assembleDebug
